@@ -2,8 +2,7 @@
 ;; uses json
 ;; uses transient
 
-;; TODO
-;; - Integrate kube-tramp changes
+;; TODO port forward mechanism
 
 (defvar-local kubectl--namespace "" "Namespace to pass to kubectl, or empty to pass no namespace")
 
@@ -161,6 +160,10 @@ then the namespace."
             (define-key map (kbd "q") 'kill-this-buffer)
             map))
 
+;;
+;; =============== Pods
+;;
+
 (defun kubectl--pods-get-log (&optional args)
   "Loads the logs of the selected kubernetes pod into a new buffer, passing [args] to the kubectl command"
   (interactive (list (transient-args 'kubectl--pods-log)))
@@ -182,7 +185,7 @@ then the namespace."
                          (format "*k8s term:%s*" podname)
                          kubectl--kubectl
                          nil
-                         (kubectl--list-args (list "exec" "-ti" podname kubectl--shell)))))
+                         (kubectl--list-args (list "exec" "-ti" podname "--" kubectl--shell)))))
     (set-buffer termbuf)
     (term-mode)
     (term-char-mode)
@@ -248,9 +251,13 @@ then the namespace."
     (define-key map (kbd "t") 'kubectl--pods-term)
     (define-key map (kbd "r") 'kubectl-pods-run)
     (define-key map (kbd "i") 'kubectl--pods-inspect)
-    (define-key map (kbd "q") 'kubectl--list-deployments)
+;;    (define-key map (kbd "q") 'kubectl--list-deployments)
     (define-key map (kbd "d") 'kubectl--pods-dired)
     map))
+
+;;
+;; =============== Deployments
+;;
 
 (defun kubectl--deployments-refresh ()
   "Refreshes the current kubernetes deployments view"
@@ -291,16 +298,76 @@ then the namespace."
   (kubectl-deployments-mode)
   (call-interactively 'kubectl-choose-context))
 
-(defun kubectl--list-deployments ()
-  "Switch to the deployment list for the current context and namespace"
-  (interactive)
-  (switch-to-buffer "*kubernetes*")
-  (tabulated-list-mode)
-  (kubectl-deployments-mode)
-  (kubectl-deployments-refresh))
+;;(defun kubectl--list-deployments ()
+;;  "Switch to the deployment list for the current context and namespace"
+;;  (interactive)
+;;  (switch-to-buffer "*kubernetes*")
+;;  (tabulated-list-mode)
+;;  (kubectl-deployments-mode)
+;;  (kubectl--deployments-refresh))
 
 (defun kubectl-open-deployment (name)
   (let* ((selflink (kubectl--run (format "get deployment.apps %s -o jsonpath={.metadata.selfLink}" name)))
+         (json-object-type 'hash-table)
+         (json-array-type 'list)
+         (json-key-type 'string)
+         (scale (json-read-from-string (kubectl--run (format "get --raw %s/scale" selflink))))
+         (selector (gethash "selector" (gethash "status" scale)))
+         (ns kubectl--namespace)
+         (ctx kubectl--context))
+    (switch-to-buffer "*kubernetes*")
+    (tabulated-list-mode)
+    (kubectl-pods-mode)
+    (setq kubectl--pods-selector selector)
+    (setq kubectl--namespace ns)
+    (setq kubectl--context ctx)
+    (kubectl-pods-refresh)))
+
+;;
+;; ===================== Stateful sets
+;;
+
+(defun kubectl-statefulsets ()
+  "Select a context and namespace, and show its statefulsets"
+  (interactive)
+  (switch-to-buffer "*kubernetes*")
+  (tabulated-list-mode)
+  (kubectl-statefulsets-mode)
+  (call-interactively 'kubectl-choose-context))
+
+(define-minor-mode kubectl-statefulsets-mode
+  "A minor mode with a keymap for the kubernetes statefulset list"
+  :keymap
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "c") 'kubectl-choose-context)
+    (define-key map (kbd "s") 'kubectl-choose-namespace)
+    (define-key map (kbd "g") 'kubectl--statefulsets-refresh)
+    (define-key map (kbd "o") 'kubectl--statefulsets-open)
+    (define-key map (kbd "RET") 'kubectl--statefulsets-open)
+    (define-key map (kbd "i") 'kubectl--statefulsets-inspect)
+    map))
+
+(defun kubectl--statefulsets-refresh ()
+  "Refreshes the current kubernetes statefulsets view"
+  (interactive)
+  (kubectl--refresh "statefulsets"
+                    "get statefulsets --no-headers=true"
+                    [("Statefulset" 66) ("Ready" 10) ("Age" 10)]))
+
+(defun kubectl--statefulsets-inspect ()
+  "Shows detail about the currently selected statefulset"
+  (interactive)
+  (kubectl--show-yaml
+   (format "*k8s statefulset:%s" (tabulated-list-get-id))
+   (list "get" "statefulset" (tabulated-list-get-id))))
+
+(defun kubectl--statefulsets-open ()
+  "Opens the deployment currently selected"
+  (interactive)
+  (kubectl-open-statefulset (tabulated-list-get-id)))
+
+(defun kubectl-open-statefulset (name)
+  (let* ((selflink (kubectl--run (format "get statefulset.apps %s -o jsonpath={.metadata.selfLink}" name)))
          (json-object-type 'hash-table)
          (json-array-type 'list)
          (json-key-type 'string)
