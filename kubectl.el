@@ -17,6 +17,14 @@
   :type 'string
   :group 'kubectl)
 
+(defcustom kubectl--known-namespaces nil
+  "Known namespaces for contexts where listing namespaces is disallowed. Some kubernetes configurations
+  don't allow namespaces to be listed. By creating an entry here, with the key being the name of the context,
+  and the value being a list of namespaces, those namespaces will be offered as selection (instead of asking
+  kubectl, which would fail)"
+  :group 'kubectl
+  :type '(alist :key-type string :value-type (repeat string)))
+
 (defvar kubectl--kubectl "/usr/bin/kubectl" "Path to kubectl to use")
 
 (defun kubectl--run (args)
@@ -91,9 +99,15 @@ then the namespace."
 
 (defun kubectl--namespace-names ()
   "Invokes kubectl to get a list of namespaces"
-  ;; TODO handle failure gracefully, and allow user to just type a namespace then
-  (let ((kubectl--namespace ""))
-    (split-string (kubectl--run "get namespaces --no-headers=true | awk '{print $1}'") "\n")))
+  (message kubectl--context)
+  (let* (
+         (known (cdr (assoc kubectl--context kubectl--known-namespaces))))
+    (if (null known)
+        ;; namespaces aren't configured in kubectl--known-namespaces, so ask kubectl
+        (let ((kubectl--namespace ""))
+          (split-string (kubectl--run "get namespaces --no-headers=true | awk '{print $1}'") "\n"))
+      ;; else
+      known)))
 
 (defun kubectl-choose-namespace (namespace)
   "Select a new namespace interactively"
@@ -251,7 +265,6 @@ then the namespace."
     (define-key map (kbd "t") 'kubectl--pods-term)
     (define-key map (kbd "r") 'kubectl-pods-run)
     (define-key map (kbd "i") 'kubectl--pods-inspect)
-;;    (define-key map (kbd "q") 'kubectl--list-deployments)
     (define-key map (kbd "d") 'kubectl--pods-dired)
     map))
 
@@ -297,14 +310,6 @@ then the namespace."
   (tabulated-list-mode)
   (kubectl-deployments-mode)
   (call-interactively 'kubectl-choose-context))
-
-;;(defun kubectl--list-deployments ()
-;;  "Switch to the deployment list for the current context and namespace"
-;;  (interactive)
-;;  (switch-to-buffer "*kubernetes*")
-;;  (tabulated-list-mode)
-;;  (kubectl-deployments-mode)
-;;  (kubectl--deployments-refresh))
 
 (defun kubectl-open-deployment (name)
   (let* ((selflink (kubectl--run (format "get deployment.apps %s -o jsonpath={.metadata.selfLink}" name)))
